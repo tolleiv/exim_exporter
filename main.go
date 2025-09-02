@@ -3,7 +3,10 @@ package main
 import (
 	"bufio"
 	"io"
-	stdlog "log"
+	"log"
+
+	//stdlog "log"
+	"log/slog"
 	"log/syslog"
 	"net/http"
 	"os"
@@ -15,14 +18,10 @@ import (
 	"time"
 
 	"github.com/alecthomas/kingpin/v2"
-	"github.com/go-kit/kit/log"
-	"github.com/go-kit/kit/log/level"
 
 	"github.com/prometheus/client_golang/prometheus"
 	version_collector "github.com/prometheus/client_golang/prometheus/collectors/version"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
-	"github.com/prometheus/common/promlog"
-	"github.com/prometheus/common/promlog/flag"
 	"github.com/prometheus/common/version"
 	"github.com/prometheus/exporter-toolkit/web"
 
@@ -157,8 +156,7 @@ type Exporter struct {
 	paniclog  string
 	eximBin   string
 	inputPath string
-	logLevel  string
-	logger    log.Logger
+	logLevel  slog.Level
 }
 
 type QueueSize struct {
@@ -169,7 +167,7 @@ type QueueSize struct {
 
 var queueSizeLastTimeout float64
 
-func NewExporter(mainlog, rejectlog, paniclog, eximExec, inputPath, logLevel string, logger log.Logger) *Exporter {
+func NewExporter(mainlog, rejectlog, paniclog, eximExec, inputPath string, logLevel slog.Level) *Exporter {
 	return &Exporter{
 		mainlog,
 		rejectlog,
@@ -177,7 +175,6 @@ func NewExporter(mainlog, rejectlog, paniclog, eximExec, inputPath, logLevel str
 		eximExec,
 		inputPath,
 		logLevel,
-		logger,
 	}
 }
 
@@ -204,11 +201,11 @@ func (e *Exporter) Collect(ch chan<- prometheus.Metric) {
 }
 
 func (e *Exporter) ProcessStates() map[string]float64 {
-	_ = level.Debug(e.logger).Log("msg", "Reading process states")
+	slog.Debug("msg", "Reading process states")
 	states := make(map[string]float64)
 	processes, err := getProcesses()
 	if err != nil {
-		_ = level.Error(e.logger).Log("msg", err)
+		slog.Error("msg", err)
 		return states
 	}
 	for _, p := range processes {
@@ -304,7 +301,7 @@ func (e *Exporter) CountMessages(dirname string, queueSize *QueueSize, deadline 
 }
 
 func (e *Exporter) QueueSize() QueueSize {
-	_ = level.Debug(e.logger).Log("msg", "Reading queue size")
+	slog.Debug("Reading queue size")
 	timeout := *frozenTimeout
 	var deadline time.Time
 	if timeout > 0 {
@@ -337,11 +334,10 @@ func (e *Exporter) Start() {
 }
 
 func (e *Exporter) FileTail(filename string) chan *tail.Line {
-	_ = level.Info(e.logger).Log("msg", "Opening log", "filename", filename)
-	var logger *stdlog.Logger
-	if e.logLevel == "debug" || e.logLevel == "info" {
-		adapter := log.NewStdlibAdapter(e.logger)
-		logger = stdlog.New(adapter, "", stdlog.LstdFlags)
+	slog.Info("Opening log", slog.String("filename", filename))
+	var logger *log.Logger
+	if e.logLevel == slog.LevelDebug || e.logLevel == slog.LevelInfo {
+		logger = slog.NewLogLogger(slog.Default().Handler(), e.logLevel)
 	} else {
 		logger = tail.DiscardingLogger
 	}
@@ -354,7 +350,7 @@ func (e *Exporter) FileTail(filename string) chan *tail.Line {
 		Logger:        logger,
 	})
 	if err != nil {
-		_ = level.Error(e.logger).Log("msg", "Unable to open log", "err", err)
+		slog.Error("Unable to open log", err)
 		os.Exit(1)
 	}
 	return t.Lines
@@ -365,11 +361,11 @@ func (e *Exporter) FileTail(filename string) chan *tail.Line {
 func (e *Exporter) TailMainLog(lines chan *tail.Line) {
 	for line := range lines {
 		if line.Err != nil {
-			_ = level.Error(e.logger).Log("msg", "Caught errorFlag while reading mainlog", "err", line.Err)
+			slog.Error("Caught errorFlag while reading mainlog", line.Err)
 			readErrors.Inc()
 			continue
 		}
-		_ = level.Debug(e.logger).Log("file", "mainlong", "msg", line.Text)
+		slog.Debug("file", "mainlong", "msg", line.Text)
 		parts := strings.SplitN(line.Text, " ", 7)
 		size := len(parts)
 		if size < 3 {
@@ -428,11 +424,11 @@ func (e *Exporter) TailMainLog(lines chan *tail.Line) {
 func (e *Exporter) TailRejectLog(lines chan *tail.Line) {
 	for line := range lines {
 		if line.Err != nil {
-			_ = level.Error(e.logger).Log("msg", "Caught error while reading rejectlog", "err", line.Err)
+			slog.Error("Caught error while reading rejectlog", "err", line.Err)
 			readErrors.Inc()
 			continue
 		}
-		_ = level.Debug(e.logger).Log("file", "rejectlog", "msg", line.Text)
+		slog.Debug("file", "rejectlog", "msg", line.Text)
 		eximReject.Inc()
 	}
 }
@@ -440,11 +436,11 @@ func (e *Exporter) TailRejectLog(lines chan *tail.Line) {
 func (e *Exporter) TailPanicLog(lines chan *tail.Line) {
 	for line := range lines {
 		if line.Err != nil {
-			_ = level.Error(e.logger).Log("msg", "Caught error while reading paniclog", "err", line.Err)
+			slog.Error("Caught error while reading paniclog", "err", line.Err)
 			readErrors.Inc()
 			continue
 		}
-		_ = level.Debug(e.logger).Log("file", "paniclog", "msg", line.Text)
+		slog.Debug("file", "paniclog", "msg", line.Text)
 		eximPanic.Inc()
 	}
 }
@@ -459,15 +455,28 @@ func init() {
 }
 
 func main() {
-	promlogConfig := &promlog.Config{}
-	flag.AddFlags(kingpin.CommandLine, promlogConfig)
+	logLevel := kingpin.Flag("loglevel", "set log level: debug, info, warn, error").String()
 	kingpin.Version(version.Print("exim_exporter"))
 	kingpin.HelpFlag.Short('h')
 	kingpin.Parse()
-	logger := promlog.New(promlogConfig)
 
-	_ = level.Info(logger).Log("msg", "Starting exim exporter", "version", version.Info())
-	_ = level.Info(logger).Log("msg", "Build context", "context", version.BuildContext())
+	logLevels := map[string]slog.Level{
+		"debug": slog.LevelDebug,
+		"info":  slog.LevelInfo,
+		"warn":  slog.LevelWarn,
+		"error": slog.LevelError,
+	}
+
+	level, ok := logLevels[*logLevel]
+	if !ok {
+		log.Fatalf("unknown log level: %s", *logLevel)
+	}
+
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level}))
+	slog.SetDefault(logger)
+
+	slog.Info("Starting exim exporter", "version", version.Info())
+	slog.Info("Build context", "context", version.BuildContext())
 
 	if !path.IsAbs(*mainlog) {
 		*mainlog = path.Join(*logPath, *mainlog)
@@ -485,8 +494,7 @@ func main() {
 		*paniclog,
 		*eximExec,
 		*inputPath,
-		promlogConfig.Level.String(),
-		logger,
+		level,
 	)
 	exporter.QueueSize()
 	exporter.Start()
@@ -502,12 +510,12 @@ func main() {
 </body>
 </html>`))
 		if err != nil {
-			_ = level.Error(logger).Log("msg", err)
+			slog.Error("msg", err)
 		}
 	})
 	http.Handle(*metricsPath, promhttp.Handler())
 
-	_ = level.Info(logger).Log("msg", "Listening", "address", listenAddress)
+	slog.Info("Listening", "address", listenAddress)
 	server := &http.Server{}
 	webSystemdSocket := false
 	flags := web.FlagConfig{
@@ -515,8 +523,8 @@ func main() {
 		WebSystemdSocket:   &webSystemdSocket,
 		WebConfigFile:      webConfigFile,
 	}
-	if err := web.ListenAndServe(server, &flags, logger); err != nil {
-		_ = level.Error(logger).Log("err", err)
+	if err := web.ListenAndServe(server, &flags, nil); err != nil {
+		slog.Error("err", err)
 		os.Exit(1)
 	}
 }

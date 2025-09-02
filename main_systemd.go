@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"github.com/coreos/go-systemd/sdjournal"
-	"github.com/go-kit/kit/log/level"
 	"github.com/nxadm/tail"
 	"log/syslog"
 	"os"
@@ -17,25 +16,25 @@ import (
 func (e *Exporter) JournalTail(identifier string, priority syslog.Priority) chan *tail.Line {
 	j, err := sdjournal.NewJournal()
 	if err != nil {
-		_ = level.Error(e.logger).Log("msg", "Unable to open journal", "err", err)
+		slog.Error("Unable to open journal", "err", err)
 		os.Exit(1)
 	}
 	if err := j.AddMatch(fmt.Sprintf("PRIORITY=%d", priority)); err != nil {
-		_ = level.Error(e.logger).Log("msg", "Could not setup priority journal match", "err", err)
+		slog.Error("Could not setup priority journal match", "err", err)
 		os.Exit(1)
 	}
 	if err := j.AddMatch(fmt.Sprintf("SYSLOG_IDENTIFIER=%s", identifier)); err != nil {
-		_ = level.Error(e.logger).Log("msg", "Could not setup syslog identifier journal match", "err", err)
+		slog.Error("Could not setup syslog identifier journal match", "err", err)
 		os.Exit(1)
 	}
 	if err := j.SeekTail(); err != nil {
-		_ = level.Error(e.logger).Log("msg", "Could not seek to journal tail", "err", err)
+		slog.Error("Could not seek to journal tail", "err", err)
 		os.Exit(1)
 	}
 	// Apparently we need to go one back to avoid getting older entries from before we start.
 	// This looks like a bug in the library.
 	if _, err := j.Previous(); err != nil {
-		_ = level.Error(e.logger).Log("msg", "Could not advance one journal entry", "err", err)
+		slog.Error("Could not advance one journal entry", "err", err)
 		os.Exit(1)
 	}
 
@@ -44,7 +43,7 @@ func (e *Exporter) JournalTail(identifier string, priority syslog.Priority) chan
 		defer func() {
 			close(lines)
 			if err := j.Close(); err != nil {
-				_ = level.Error(e.logger).Log("msg", "Could not close journal", "err", err)
+				slog.Error("Could not close journal", "err", err)
 			}
 		}()
 

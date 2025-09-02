@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/testutil"
-	"github.com/prometheus/common/promlog"
+	"log/slog"
 	"math/rand"
 	"os"
 	"path/filepath"
@@ -139,8 +139,6 @@ func appendLog(name string, file *os.File, t *testing.T) {
 }
 
 func TestMetrics(t *testing.T) {
-	logger := promlog.New(&promlog.Config{})
-
 	// Create a temp dir for our mock data
 	tempPath, err := os.MkdirTemp("", "exim_exporter_test")
 	if err != nil {
@@ -176,8 +174,7 @@ func TestMetrics(t *testing.T) {
 		paniclog.Name(),
 		"exim4",
 		inputPath,
-		"debug",
-		logger,
+		slog.LevelDebug,
 	)
 	exporter.Start()
 	if err := registry.Register(exporter); err != nil {
