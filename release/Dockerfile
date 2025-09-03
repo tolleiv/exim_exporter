@@ -1,4 +1,4 @@
-FROM --platform=amd64 ubuntu:focal
+FROM --platform=amd64 ubuntu:noble
 ENV GO_VERSION=1.22.5
 ENV PATH="${PATH}:/opt/go/bin"
 WORKDIR /opt/exim_exporter
